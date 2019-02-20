@@ -33,9 +33,14 @@ import json
 import datetime
 import numpy as np
 import skimage.draw
+from PIL import Image
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../../")
+
+#TODO add global alphamatte mask directory
+alphamatte_dir = ""
+original_dir = ""
 
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
@@ -54,12 +59,12 @@ DEFAULT_LOGS_DIR = os.path.join(ROOT_DIR, "logs")
 ############################################################
 
 
-class BalloonConfig(Config):
+class CarConfig(Config):
     """Configuration for training on the toy  dataset.
     Derives from the base Config class and overrides some values.
     """
     # Give the configuration a recognizable name
-    NAME = "balloon"
+    NAME = "car"
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
@@ -79,20 +84,19 @@ class BalloonConfig(Config):
 #  Dataset
 ############################################################
 
-class BalloonDataset(utils.Dataset):
+class CarDataset(utils.Dataset):
 
-    def load_balloon(self, dataset_dir, subset):
+    def load_car(self, dataset_dir, subset):
         """Load a subset of the Balloon dataset.
         dataset_dir: Root directory of the dataset.
         subset: Subset to load: train or val
         """
         # Add classes. We have only one class to add.
-        self.add_class("balloon", 1, "balloon")
+        self.add_class("car", 1, "car")
 
-        # Train or validation dataset?
+        # 当前路径下有两个数据集: "train" 和 "val"
         assert subset in ["train", "val"]
-        dataset_dir = os.path.join(dataset_dir, subset)
-
+        # 获取到数据集的完整路径
         # Load annotations
         # VGG Image Annotator (up to version 1.6) saves each image in the form:
         # { 'filename': '28503151_5b5b7ec140_b.jpg',
@@ -109,59 +113,44 @@ class BalloonDataset(utils.Dataset):
         # }
         # We mostly care about the x and y coordinates of each region
         # Note: In VIA 2.0, regions was changed from a dict to a list.
-        annotations = json.load(open(os.path.join(dataset_dir, "via_region_data.json")))
-        annotations = list(annotations.values())  # don't need the dict keys
 
-        # The VIA tool saves images in the JSON even if they don't have any
-        # annotations. Skip unannotated images.
-        annotations = [a for a in annotations if a['regions']]
-
-        # Add images
-        for a in annotations:
-            # Get the x, y coordinaets of points of the polygons that make up
-            # the outline of each object instance. These are stores in the
-            # shape_attributes (see json format above)
-            # The if condition is needed to support VIA versions 1.x and 2.x.
-            if type(a['regions']) is dict:
-                polygons = [r['shape_attributes'] for r in a['regions'].values()]
-            else:
-                polygons = [r['shape_attributes'] for r in a['regions']] 
-
-            # load_mask() needs the image size to convert polygons to masks.
-            # Unfortunately, VIA doesn't include it in JSON, so we must read
-            # the image. This is only managable since the dataset is tiny.
-            image_path = os.path.join(dataset_dir, a['filename'])
-            image = skimage.io.imread(image_path)
-            height, width = image.shape[:2]
-
+        # TODO 获取注解并解析，需要弄清楚到底有什么数据需要输入，明确如何计算loss
+        rgb_names = os.listdir(original_dir)
+        for name in rgb_names:
+            image_obj = Image.open(os.path.join(original_dir, name))
+            shape = np.shape(image_obj)
+            height = shape[0]
+            width = shape[1]
             self.add_image(
-                "balloon",
-                image_id=a['filename'],  # use file name as a unique image id
-                path=image_path,
-                width=width, height=height,
-                polygons=polygons)
+                "car",
+                image_id=name,  # use file name as a unique image id
+                path=os.path.join(original_dir, name),
+                width=width, height=height)
 
+    # image_id is the directory of the mask image.
     def load_mask(self, image_id):
+        # TODO load mask directly from file
         """Generate instance masks for an image.
        Returns:
         masks: A bool array of shape [height, width, instance count] with
             one mask per instance.
         class_ids: a 1D array of class IDs of the instance masks.
         """
-        # If not a balloon dataset image, delegate to parent class.
+        # If not a car dataset image, delegate to parent class.
+
+        #    image_info = {
+        #        "id": image_id,
+        #        "source": source,
+        #        "path": path,
+        #    }
         image_info = self.image_info[image_id]
-        if image_info["source"] != "balloon":
+        if image_info["source"] != "car":
             return super(self.__class__, self).load_mask(image_id)
 
         # Convert polygons to a bitmap mask of shape
-        # [height, width, instance_count]
         info = self.image_info[image_id]
-        mask = np.zeros([info["height"], info["width"], len(info["polygons"])],
-                        dtype=np.uint8)
-        for i, p in enumerate(info["polygons"]):
-            # Get indexes of pixels inside the polygon and set them to 1
-            rr, cc = skimage.draw.polygon(p['all_points_y'], p['all_points_x'])
-            mask[rr, cc, i] = 1
+        image_obj = Image.open(os.path.join(alphamatte_dir, info[image_id]["id"]))
+        mask = np.array(image_obj)
 
         # Return mask, and array of class IDs of each instance. Since we have
         # one class ID only, we return an array of 1s
@@ -170,7 +159,7 @@ class BalloonDataset(utils.Dataset):
     def image_reference(self, image_id):
         """Return the path of the image."""
         info = self.image_info[image_id]
-        if info["source"] == "balloon":
+        if info["source"] == "car":
             return info["path"]
         else:
             super(self.__class__, self).image_reference(image_id)
@@ -179,13 +168,14 @@ class BalloonDataset(utils.Dataset):
 def train(model):
     """Train the model."""
     # Training dataset.
-    dataset_train = BalloonDataset()
-    dataset_train.load_balloon(args.dataset, "train")
+    # TODO 构建数据库
+    dataset_train = CarDataset()
+    dataset_train.load_car(args.dataset, "train")
     dataset_train.prepare()
 
     # Validation dataset
-    dataset_val = BalloonDataset()
-    dataset_val.load_balloon(args.dataset, "val")
+    dataset_val = CarDataset()
+    dataset_val.load_car(args.dataset, "val")
     dataset_val.prepare()
 
     # *** This training schedule is an example. Update to your needs ***
@@ -193,10 +183,16 @@ def train(model):
     # COCO trained weights, we don't need to train too long. Also,
     # no need to train all layers, just the heads should do it.
     print("Training network heads")
+    # TODO 传入数据库， 设置参数， 需要修改layers， 训练所有的层。
+    # dataset_train: 训练时的dataset参数。
+    # dataset_val： 每次验证的dataset参数。
+    # learning_rate: 初始的learning rate。
+    # epoch: epoch number.
+    # layers: 选择需要训练的层数。
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
                 epochs=30,
-                layers='heads')
+                layers='all')
 
 
 def color_splash(image, mask):
@@ -280,19 +276,19 @@ if __name__ == '__main__':
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description='Train Mask R-CNN to detect balloons.')
+        description='Train Mask R-CNN to detect cars.')
     parser.add_argument("command",
                         metavar="<command>",
                         help="'train' or 'splash'")
-    parser.add_argument('--dataset', required=False,
-                        metavar="/path/to/balloon/dataset/",
-                        help='Directory of the Balloon dataset')
+    parser.add_argument('--dataset', required=True,
+                        metavar="/home/xiaob6/newalpha/myfolder/original",
+                        help='Directory of the car dataset')
     parser.add_argument('--weights', required=True,
-                        metavar="/path/to/weights.h5",
+                        metavar="coco",
                         help="Path to weights .h5 file or 'coco'")
     parser.add_argument('--logs', required=False,
                         default=DEFAULT_LOGS_DIR,
-                        metavar="/path/to/logs/",
+                        metavar="./model",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--image', required=False,
                         metavar="path or URL to image",
@@ -315,9 +311,15 @@ if __name__ == '__main__':
 
     # Configurations
     if args.command == "train":
-        config = BalloonConfig()
+        # Configure:
+        # name: 当前训练集的名字。
+        # IMAGES_PER_GPU: 设置每个GPU上运行的图片的数量，默认为2。
+        # NUM_CLASSES: 对于当前的Fine tune, 总共有两类， background 和 car
+        # STEPS_PER_EPOCH: 每个epoch的step个数。
+        # DETECTION_MIN_CONFIDENCE: confidence大于90%默认选中。
+        config = CarConfig()
     else:
-        class InferenceConfig(BalloonConfig):
+        class InferenceConfig(CarConfig):
             # Set batch size to 1 since we'll be running inference on
             # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
             GPU_COUNT = 1
@@ -327,28 +329,31 @@ if __name__ == '__main__':
 
     # Create model
     if args.command == "train":
+        # 训练模型
         model = modellib.MaskRCNN(mode="training", config=config,
                                   model_dir=args.logs)
     else:
+        # 测试模型
         model = modellib.MaskRCNN(mode="inference", config=config,
                                   model_dir=args.logs)
 
-    # Select weights file to load
+    # 选择需要加载的模型路径
     if args.weights.lower() == "coco":
+        # 加载coco的模型进行fine tune.
         weights_path = COCO_WEIGHTS_PATH
-        # Download weights file
         if not os.path.exists(weights_path):
             utils.download_trained_weights(weights_path)
     elif args.weights.lower() == "last":
-        # Find last trained weights
+        # 加载上次训练存储的模型。
         weights_path = model.find_last()
     elif args.weights.lower() == "imagenet":
-        # Start from ImageNet trained weights
+        # 加载imagenet的模型。
         weights_path = model.get_imagenet_weights()
     else:
+        # 加载指定的模型路径。
         weights_path = args.weights
 
-    # Load weights
+    # 加载模型
     print("Loading weights ", weights_path)
     if args.weights.lower() == "coco":
         # Exclude the last layers because they require a matching
@@ -359,10 +364,11 @@ if __name__ == '__main__':
     else:
         model.load_weights(weights_path, by_name=True)
 
-    # Train or evaluate
     if args.command == "train":
+        # 训练模型，传入模型。
         train(model)
     elif args.command == "splash":
+        # 测试
         detect_and_color_splash(model, image_path=args.image,
                                 video_path=args.video)
     else:

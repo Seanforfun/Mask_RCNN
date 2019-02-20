@@ -1695,15 +1695,24 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 np.random.shuffle(image_ids)
 
             # Get GT bounding boxes and masks for image.
+            # TODO Re-write this part for getting bounding box and mask
             image_id = image_ids[image_index]
 
             # If the image source is not to be augmented pass None as augmentation
+            # self.add_class("car", 1, "car")
+            # self.class_info.append({
+            #    "source": source,
+            #    "id": class_id,
+            #    "name": class_name,
+            #})
             if dataset.image_info[image_id]['source'] in no_augmentation_sources:
+                # TODO Read through this part
                 image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
                 load_image_gt(dataset, config, image_id, augment=augment,
                               augmentation=None,
                               use_mini_mask=config.USE_MINI_MASK)
             else:
+                # 会进这个分支
                 image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
                     load_image_gt(dataset, config, image_id, augment=augment,
                                 augmentation=augmentation,
@@ -2310,6 +2319,7 @@ class MaskRCNN():
         """
         assert self.mode == "training", "Create model in training mode."
 
+        # 列出所有的层的名称和正则表达式。
         # Pre-defined layer regular expressions
         layer_regex = {
             # all layers but the backbone
@@ -2325,6 +2335,10 @@ class MaskRCNN():
             layers = layer_regex[layers]
 
         # Data generators
+        # 数据生成器。augmentation为None
+        # no_augmentation_sources： None
+        # TODO self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
+        # TODO self.IMAGES_PER_GPU： 默认为2， GPU_COUNT: 当前机器中的GPU的个数。
         train_generator = data_generator(train_dataset, self.config, shuffle=True,
                                          augmentation=augmentation,
                                          batch_size=self.config.BATCH_SIZE,
